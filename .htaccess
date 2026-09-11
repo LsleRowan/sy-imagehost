@@ -1,0 +1,17 @@
+# 禁止访问敏感目录
+<FilesMatch "\.(php|php3|php4|php5|phtml|phar|cgi|pl|sh)$">
+    # 只对 config 和 includes 目录生效（通过 RewriteRule 处理）
+</FilesMatch>
+
+# 禁止直接访问 config 目录
+RewriteEngine On
+RewriteRule ^config/ - [F,L]
+RewriteRule ^includes/ - [F,L]
+
+# 禁止访问隐藏文件
+RewriteRule (^\.|/\.) - [F,L]
+
+# 如果请求的文件或目录不存在，重写到 index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]

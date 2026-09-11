@@ -1,0 +1,15 @@
+# 禁止 PHP 执行
+php_flag engine off
+
+# 禁止目录浏览
+Options -Indexes
+
+# 禁止访问可执行文件
+<FilesMatch "\.(php|php3|php4|php5|phtml|phar|cgi|pl|sh|js|html|htm|shtml|pht|phps)$">
+    Deny from all
+</FilesMatch>
+
+# 禁止 .htaccess 被访问
+<Files ".htaccess">
+    Deny from all
+</Files>
