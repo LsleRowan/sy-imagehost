@@ -161,6 +161,35 @@ function deleteFolder(string $name): bool
 }
 
 /**
+ * 获取所有图片及其 URL 一致性状态
+ */
+function getImagesWithUrlStatus(): array
+{
+    $pdo = getDB();
+    $stmt = $pdo->query("
+        SELECT i.id, i.url, i.filename, f.name AS folder_name
+        FROM images i
+        JOIN folders f ON i.folder_id = f.id
+        ORDER BY i.uploaded_at DESC
+    ");
+    $rows = $stmt->fetchAll();
+    $baseUrl = rtrim(BASE_URL, '/');
+
+    $images = [];
+    foreach ($rows as $row) {
+        $url = $row['url'];
+        $images[] = [
+            'id' => (int)$row['id'],
+            'url' => $url,
+            'filename' => $row['filename'],
+            'folder_name' => $row['folder_name'],
+            'url_valid' => strpos($url, $baseUrl) === 0,
+        ];
+    }
+    return $images;
+}
+
+/**
  * 获取所有图片列表（MySQL）
  */
 function getImages(string $folder = null): array

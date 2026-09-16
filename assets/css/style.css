@@ -584,6 +584,15 @@ a:hover {
         gap: 8px;
     }
 
+    .url-check-item {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 8px;
+    }
+    .url-check-item form {
+        margin-left: 0 !important;
+    }
+
     .url-box {
         flex-direction: column;
     }

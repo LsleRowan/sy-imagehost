@@ -78,6 +78,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
 
+        if ($_POST['action'] === 'fix_url') {
+            $imageId = (int)($_POST['image_id'] ?? 0);
+            if ($imageId <= 0) {
+                $message = '无效的图片 ID';
+                $messageType = 'error';
+            } else {
+                $pdo = getDB();
+                $stmt = $pdo->prepare("SELECT id, url FROM images WHERE id = ? LIMIT 1");
+                $stmt->execute([$imageId]);
+                $img = $stmt->fetch();
+                if (!$img) {
+                    $message = '图片不存在';
+                    $messageType = 'error';
+                } else {
+                    $oldUrl = $img['url'];
+                    $pathPart = preg_replace('#^.*/uploads/#', '/uploads/', $oldUrl);
+                    $newUrl = rtrim(BASE_URL, '/') . $pathPart;
+                    $update = $pdo->prepare("UPDATE images SET url = ? WHERE id = ?");
+                    if ($update->execute([$newUrl, $imageId])) {
+                        $message = "已修复：{$oldUrl} → {$newUrl}";
+                        $messageType = 'success';
+                    } else {
+                        $message = '修复失败，请重试';
+                        $messageType = 'error';
+                    }
+                }
+            }
+        }
+
+        if ($_POST['action'] === 'fix_all_urls') {
+            $pdo = getDB();
+            $baseUrl = rtrim(BASE_URL, '/');
+            $stmt = $pdo->query("SELECT id, url FROM images");
+            $all = $stmt->fetchAll();
+            $fixed = 0;
+            foreach ($all as $row) {
+                if (strpos($row['url'], $baseUrl) !== 0) {
+                    $pathPart = preg_replace('#^.*/uploads/#', '/uploads/', $row['url']);
+                    $newUrl = $baseUrl . $pathPart;
+                    $pdo->prepare("UPDATE images SET url = ? WHERE id = ?")->execute([$newUrl, $row['id']]);
+                    $fixed++;
+                }
+            }
+            $message = "批量修复完成，共修复 {$fixed} 条 URL";
+            $messageType = 'success';
+        }
+
         if ($_POST['action'] === 'change_username') {
             $newUsername = trim($_POST['new_username'] ?? '');
             if (empty($newUsername)) {
@@ -256,6 +303,51 @@ $currentMaxMb = round(((int)($currentSettings['max_file_size'] ?? 10485760)) / 1
                                 <button type="submit" class="btn btn-sm btn-primary">重建目录</button>
                             </form>
                         <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+
+        <!-- URL 一致性检查 -->
+        <?php $allImages = getImagesWithUrlStatus(); ?>
+        <?php $invalidImages = array_values(array_filter($allImages, fn($img) => !$img['url_valid'])); ?>
+
+        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:24px;">
+            <h3 style="margin-bottom:16px">URL 一致性检查</h3>
+            <div style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
+                检查图片 URL 是否与当前 Base URL 一致。修改 Base URL 后，旧图片的 URL 不会自动更新，可在此修复。
+            </div>
+
+            <?php if (empty($invalidImages)): ?>
+                <div class="alert alert-success">所有图片 URL 均与当前 Base URL 一致</div>
+            <?php else: ?>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <span style="font-size:13px; color:var(--danger);">
+                        发现 <?php echo count($invalidImages); ?> 条不一致的 URL
+                    </span>
+                    <form method="POST" style="display:inline" onsubmit="return confirm('确定要批量修复所有不一致的 URL 吗？')">
+                        <input type="hidden" name="action" value="fix_all_urls">
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
+                        <button type="submit" class="btn btn-sm btn-primary">一键修复全部</button>
+                    </form>
+                </div>
+
+                <?php foreach ($invalidImages as $img): ?>
+                    <div class="url-check-item" style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius); margin-bottom:8px;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-size:13px; color:var(--danger); margin-bottom:4px;">
+                                ⚠️ <?php echo htmlspecialchars($img['folder_name'] . '/' . $img['filename']); ?>
+                            </div>
+                            <div style="font-size:12px; color:var(--text-muted); word-break:break-all;">
+                                当前：<?php echo htmlspecialchars($img['url']); ?>
+                            </div>
+                        </div>
+                        <form method="POST" style="display:inline; margin-left:12px; flex-shrink:0;">
+                            <input type="hidden" name="action" value="fix_url">
+                            <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
+                            <input type="hidden" name="image_id" value="<?php echo $img['id']; ?>">
+                            <button type="submit" class="btn btn-sm btn-primary">修复</button>
+                        </form>
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
