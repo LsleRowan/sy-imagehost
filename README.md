@@ -13,7 +13,7 @@
 
 - PHP 7.4+（推荐 8.0+）
 - MySQL 5.7+ 或 MariaDB 10.3+
-- Apache + mod_rewrite
+- Apache + mod_rewrite 或 nginx（无需伪静态规则）
 
 ## 安装
 
@@ -27,7 +27,7 @@
 
 数据库配置：`config/config.php`
 
-站点配置（Base URL / CORS / API Token / 上传限制）：安装完成后在后台「设置」页面修改
+站点配置（Base URL / CORS / API Token / 上传限制 / 登录安全）：安装完成后在后台「设置」页面修改
 
 ## API
 
@@ -55,7 +55,7 @@ sy-imagehost/
 
 ## 安全
 
-- 登录失败 5 次后锁定 15 分钟
+- 登录失败 5 次后锁定 30 分钟，次数/时长/会话有效期可在后台「登录安全」调整
 - 所有密码使用 bcrypt 哈希
 - API 使用 timing-safe Token 比对
 - 上传文件经过扩展名、MIME 类型、图片格式三重验证
