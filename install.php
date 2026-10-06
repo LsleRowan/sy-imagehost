@@ -8,8 +8,19 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/settings.php';
 require_once __DIR__ . '/includes/response.php';
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/icons.php';
 initSession();
 setSecurityHeaders();
+
+$siteName = 'ImageHost';
+try {
+    $installedName = trim((string)(getSetting('site_name') ?: ''));
+    if ($installedName !== '') {
+        $siteName = $installedName;
+    }
+} catch (\Throwable $e) {
+    // settings 表尚未创建
+}
 
 // 已安装则跳转后台
 try {
@@ -181,57 +192,85 @@ $defaultToken = strtoupper(bin2hex(random_bytes(32)));
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安装 - ImageHost</title>
+    <title>安装 - <?php echo htmlspecialchars($siteName); ?></title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <link rel="stylesheet" href="assets/css/style.css">
+    <script>
+    (function () {
+        try {
+            if (localStorage.getItem('ih-theme') === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        } catch (e) {}
+    })();
+    </script>
 </head>
 <body>
     <div class="login-wrapper">
-        <div class="login-box" style="max-width:480px">
-            <h1>ImageHost</h1>
+        <div class="login-box">
+            <div class="login-brand">
+                <h1><?php echo htmlspecialchars($siteName); ?></h1>
+                <p>安装向导 · 初始化数据库与站点配置</p>
+            </div>
+
+            <div class="steps" aria-label="安装步骤">
+                <div class="step<?php echo $needInstall ? ' active' : ' done'; ?>">
+                    <span class="step-dot"><?php echo $needInstall ? '1' : icon('check', 12); ?></span>
+                    <span class="step-label">数据库初始化</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step<?php echo $needInstall ? '' : ' active'; ?>">
+                    <span class="step-dot">2</span>
+                    <span class="step-label">站点配置</span>
+                </div>
+            </div>
 
             <?php if ($error): ?>
-                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+                <div class="alert alert-error"><?php echo icon('alert', 16); ?> <?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+
+            <?php if (!$needInstall && $success): ?>
+                <div class="alert alert-success"><?php echo icon('check', 16); ?> <?php echo htmlspecialchars($success); ?></div>
             <?php endif; ?>
 
             <?php if ($needInstall): ?>
                 <!-- 第一步：建表 + 管理员 -->
-                <p style="color:var(--text-muted); margin-bottom:20px; font-size:14px;">检测到数据库尚未初始化，请设置管理员账号并初始化</p>
+                <p class="wizard-intro">检测到数据库尚未初始化，请设置管理员账号并完成初始化。</p>
                 <form method="POST">
                     <input type="hidden" name="action" value="create_tables">
                     <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
                     <div class="form-group">
-                        <label for="admin_username">管理员用户名 <span style="color:var(--danger)">*</span></label>
+                        <label for="admin_username">管理员用户名 <span class="req">*</span></label>
                         <input type="text" id="admin_username" name="admin_username" required maxlength="50"
                                value="<?php echo htmlspecialchars($_POST['admin_username'] ?? 'admin'); ?>">
                     </div>
                     <div class="form-group">
-                        <label for="admin_password">管理员密码 <span style="color:var(--danger)">*</span></label>
+                        <label for="admin_password">管理员密码 <span class="req">*</span></label>
                         <input type="password" id="admin_password" name="admin_password" required minlength="6"
-                               placeholder="至少6个字符">
+                               placeholder="至少 6 个字符" autocomplete="new-password">
+                        <div class="form-hint">用于登录管理后台，请妥善保管</div>
                     </div>
                     <div class="form-group">
-                        <label for="admin_password_confirm">确认密码 <span style="color:var(--danger)">*</span></label>
-                        <input type="password" id="admin_password_confirm" name="admin_password_confirm" required minlength="6">
+                        <label for="admin_password_confirm">确认密码 <span class="req">*</span></label>
+                        <input type="password" id="admin_password_confirm" name="admin_password_confirm" required
+                               minlength="6" autocomplete="new-password">
                     </div>
-                    <button type="submit" class="btn btn-primary" style="width:100%">初始化数据库</button>
+                    <button type="submit" class="btn btn-primary btn-block">初始化数据库</button>
                 </form>
 
             <?php else: ?>
                 <!-- 第二步：站点配置 -->
-                <p style="color:var(--text-muted); margin-bottom:20px; font-size:14px;">
-                    <?php echo $success ?: '请完成站点配置'; ?>
-                </p>
+                <p class="wizard-intro"><?php echo $success ? '数据库已就绪，继续完成站点配置。' : '请完成以下站点配置。'; ?></p>
                 <form method="POST">
                     <input type="hidden" name="action" value="save_settings">
                     <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
                     <div class="form-group">
-                        <label for="base_url">Base URL <span style="color:var(--danger)">*</span></label>
+                        <label for="base_url">Base URL <span class="req">*</span></label>
                         <input type="url" id="base_url" name="base_url" required
                                placeholder="https://img.example.com"
                                value="<?php echo htmlspecialchars($_POST['base_url'] ?? ''); ?>">
-                        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">图片访问的根地址，末尾不带 /</div>
+                        <div class="form-hint">图片访问的根地址，末尾不带 /</div>
                     </div>
 
                     <div class="form-group">
@@ -239,24 +278,24 @@ $defaultToken = strtoupper(bin2hex(random_bytes(32)));
                         <input type="text" id="cors_origin" name="cors_origin"
                                placeholder="https://gallery.example.com"
                                value="<?php echo htmlspecialchars($_POST['cors_origin'] ?? ''); ?>">
-                        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">允许跨域访问的域名，多个用逗号分隔，可留空</div>
+                        <div class="form-hint">允许跨域访问的域名，多个用逗号分隔，可留空</div>
                     </div>
 
                     <div class="form-group">
-                        <label for="api_token">API Token <span style="color:var(--danger)">*</span></label>
+                        <label for="api_token">API Token <span class="req">*</span></label>
                         <input type="text" id="api_token" name="api_token" required
                                value="<?php echo htmlspecialchars($_POST['api_token'] ?? $defaultToken); ?>">
-                        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">API 上传/删除接口的鉴权 Token</div>
+                        <div class="form-hint">API 上传 / 删除接口的鉴权 Token</div>
                     </div>
 
                     <div class="form-group">
-                        <label for="max_file_size">最大上传大小 (MB) <span style="color:var(--danger)">*</span></label>
+                        <label for="max_file_size">最大上传大小 (MB) <span class="req">*</span></label>
                         <input type="number" id="max_file_size" name="max_file_size" required min="1" max="100"
                                value="<?php echo htmlspecialchars($_POST['max_file_size'] ?? '10'); ?>">
-                        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">范围 1-100 MB</div>
+                        <div class="form-hint">范围 1 - 100 MB</div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" style="width:100%">完成安装</button>
+                    <button type="submit" class="btn btn-primary btn-block">完成安装</button>
                 </form>
             <?php endif; ?>
         </div>
