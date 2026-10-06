@@ -7,6 +7,8 @@ require_once dirname(__DIR__) . '/includes/db.php';
 require_once dirname(__DIR__) . '/includes/functions.php';
 require_once dirname(__DIR__) . '/includes/response.php';
 require_once dirname(__DIR__) . '/includes/auth.php';
+require_once dirname(__DIR__) . '/includes/settings.php';
+require_once dirname(__DIR__) . '/includes/icons.php';
 
 initSession();
 setSecurityHeaders();
@@ -14,6 +16,15 @@ setSecurityHeaders();
 if (isAdminLoggedIn()) {
     header('Location: index.php');
     exit;
+}
+
+try {
+    $siteName = trim((string)(getSetting('site_name') ?: ''));
+} catch (\Throwable $e) {
+    $siteName = '';
+}
+if ($siteName === '') {
+    $siteName = 'ImageHost';
 }
 
 $error = '';
@@ -49,30 +60,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - ImageHost</title>
+    <title>登录 - <?php echo htmlspecialchars($siteName); ?></title>
     <link rel="icon" type="image/x-icon" href="../favicon.ico">
     <link rel="apple-touch-icon" href="../apple-touch-icon.png">
     <link rel="stylesheet" href="../assets/css/style.css">
+    <script>
+    (function () {
+        try {
+            if (localStorage.getItem('ih-theme') === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        } catch (e) {}
+    })();
+    </script>
 </head>
 <body>
     <div class="login-wrapper">
         <div class="login-box">
-            <h1>ImageHost</h1>
+            <div class="login-brand">
+                <h1><?php echo htmlspecialchars($siteName); ?></h1>
+                <p>私人图片托管服务 · 管理后台</p>
+            </div>
+
             <?php if ($error): ?>
-                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+                <div class="alert alert-error"><?php echo icon('alert', 16); ?> <?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
+
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
                 <div class="form-group">
                     <label for="username">用户名</label>
                     <input type="text" id="username" name="username" required autofocus
+                           autocomplete="username"
                            value="<?php echo htmlspecialchars($username ?? ''); ?>">
                 </div>
                 <div class="form-group">
                     <label for="password">密码</label>
-                    <input type="password" id="password" name="password" required>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
                 </div>
-                <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
+                <button type="submit" class="btn btn-primary btn-block btn-lg">登录</button>
             </form>
         </div>
     </div>
