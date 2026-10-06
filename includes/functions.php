@@ -238,6 +238,46 @@ function getImages(string $folder = null): array
 }
 
 /**
+ * 获取最近上传的图片（按上传时间倒序）
+ */
+function getRecentImages(int $limit = 10): array
+{
+    $pdo = getDB();
+    $stmt = $pdo->prepare("
+        SELECT i.id, i.folder_id, i.filename, i.original_name, i.mime_type,
+               i.file_size, i.width, i.height, i.url, i.uploaded_at,
+               f.name AS folder_name
+        FROM images i
+        JOIN folders f ON i.folder_id = f.id
+        ORDER BY i.uploaded_at DESC
+        LIMIT ?
+    ");
+    $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+
+    $images = [];
+    foreach ($rows as $row) {
+        $images[] = [
+            'id' => (int)$row['id'],
+            'name' => $row['filename'],
+            'original_name' => $row['original_name'],
+            'folder' => $row['folder_name'],
+            'folder_id' => (int)$row['folder_id'],
+            'mime_type' => $row['mime_type'],
+            'url' => $row['url'],
+            'size' => (int)$row['file_size'],
+            'sizeFormatted' => formatFileSize((int)$row['file_size']),
+            'width' => (int)$row['width'],
+            'height' => (int)$row['height'],
+            'uploaded_at' => $row['uploaded_at'],
+        ];
+    }
+
+    return $images;
+}
+
+/**
  * 获取单张图片信息（MySQL）
  */
 function getImageById(int $id): ?array
@@ -304,9 +344,212 @@ function getTotalStorageUsed(): int
 }
 
 /**
+ * 重命名文件夹（数据库 + 物理目录）
+ */
+function renameFolder(string $oldName, string $newName): bool
+{
+    if (!validateFolderName($oldName) || !validateFolderName($newName)) {
+        return false;
+    }
+
+    if ($oldName === $newName) {
+        return true;
+    }
+
+    $folderId = getFolderId($oldName);
+    if ($folderId === null) {
+        return false;
+    }
+
+    if (getFolderId($newName) !== null || is_dir(UPLOAD_DIR . $newName)) {
+        return false;
+    }
+
+    $pdo = getDB();
+    $stmt = $pdo->prepare("UPDATE folders SET name = ? WHERE id = ?");
+    try {
+        if (!$stmt->execute([$newName, $folderId])) {
+            return false;
+        }
+    } catch (PDOException $e) {
+        return false;
+    }
+
+    $oldPath = UPLOAD_DIR . $oldName;
+    $newPath = UPLOAD_DIR . $newName;
+
+    if (is_dir($oldPath) && !rename($oldPath, $newPath)) {
+        // 目录改名失败则回滚数据库
+        $pdo->prepare("UPDATE folders SET name = ? WHERE id = ?")->execute([$oldName, $folderId]);
+        return false;
+    }
+
+    if (!is_dir($newPath)) {
+        @mkdir($newPath, 0755);
+    }
+
+    return true;
+}
+
+/**
+ * 文件类型分布统计
+ * 返回：[['label' => 'JPG', 'count' => 12, 'bytes' => 123456], ...]
+ */
+function getFileTypeStats(): array
+{
+    $pdo = getDB();
+    $stmt = $pdo->query("
+        SELECT mime_type, MAX(filename) AS sample, COUNT(*) AS cnt, IFNULL(SUM(file_size), 0) AS bytes
+        FROM images
+        GROUP BY mime_type
+        ORDER BY cnt DESC
+    ");
+
+    $stats = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $parts = explode('/', (string)$row['mime_type']);
+        $label = strtoupper(end($parts));
+        if ($label === '') {
+            // mime_type 为空时退回用文件扩展名兜底，避免显示"未知"
+            $label = strtoupper(pathinfo((string)$row['sample'], PATHINFO_EXTENSION));
+        }
+        if ($label === 'JPEG') {
+            $label = 'JPG';
+        }
+        $stats[] = [
+            'label' => $label !== '' ? $label : '未知',
+            'count' => (int)$row['cnt'],
+            'bytes' => (int)$row['bytes'],
+        ];
+    }
+
+    return $stats;
+}
+
+/**
+ * 近 7 天新增图片数量
+ */
+function getRecentWeeklyCount(): int
+{
+    $pdo = getDB();
+    return (int)$pdo->query(
+        "SELECT COUNT(*) FROM images WHERE uploaded_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
+    )->fetchColumn();
+}
+
+/**
+ * 服务器是否支持 WebP 转换（需要 GD 的 imagewebp）
+ */
+function supportsWebpConversion(): bool
+{
+    return function_exists('imagewebp');
+}
+
+/**
+ * 判断 GIF 是否为动画（含 NETSCAPE2.0 循环块）
+ */
+function isAnimatedGif(string $path): bool
+{
+    $data = @file_get_contents($path);
+    if ($data === false) {
+        return false;
+    }
+    return strpos($data, 'NETSCAPE2.0') !== false;
+}
+
+/**
+ * 将图片转换为 WebP 写入 $destPath，返回是否成功
+ */
+function convertImageToWebp(string $srcPath, string $destPath, int $quality = 85): bool
+{
+    if (!supportsWebpConversion()) {
+        return false;
+    }
+
+    $info = @getimagesize($srcPath);
+    if ($info === false) {
+        return false;
+    }
+
+    $img = false;
+    if ($info[2] === IMAGETYPE_JPEG && function_exists('imagecreatefromjpeg')) {
+        $img = @imagecreatefromjpeg($srcPath);
+    } elseif ($info[2] === IMAGETYPE_PNG && function_exists('imagecreatefrompng')) {
+        $img = @imagecreatefrompng($srcPath);
+    } elseif ($info[2] === IMAGETYPE_GIF && function_exists('imagecreatefromgif')) {
+        $img = @imagecreatefromgif($srcPath);
+    } elseif ($info[2] === IMAGETYPE_WEBP && function_exists('imagecreatefromwebp')) {
+        $img = @imagecreatefromwebp($srcPath);
+    } elseif (defined('IMAGETYPE_AVIF') && $info[2] === IMAGETYPE_AVIF && function_exists('imagecreatefromavif')) {
+        $img = @imagecreatefromavif($srcPath);
+    }
+
+    if ($img === false) {
+        return false;
+    }
+
+    if ($info[2] === IMAGETYPE_GIF) {
+        @imagepalettetotruecolor($img);
+    }
+
+    // EXIF 方向修正（GD 输出不保留 EXIF 元数据）
+    if ($info[2] === IMAGETYPE_JPEG && function_exists('exif_read_data') && function_exists('imagerotate')) {
+        $exif = @exif_read_data($srcPath);
+        $orientation = (int)($exif['Orientation'] ?? 1);
+        if ($orientation >= 2 && $orientation <= 8) {
+            $rotate = function ($image, $angle) {
+                $rotated = imagerotate($image, $angle, 0);
+                if ($rotated !== false) {
+                    imagedestroy($image);
+                    return $rotated;
+                }
+                return $image;
+            };
+            switch ($orientation) {
+                case 2:
+                    imageflip($img, IMG_FLIP_HORIZONTAL);
+                    break;
+                case 3:
+                    $img = $rotate($img, 180);
+                    break;
+                case 4:
+                    imageflip($img, IMG_FLIP_VERTICAL);
+                    break;
+                case 5:
+                    $img = $rotate($img, -90);
+                    imageflip($img, IMG_FLIP_HORIZONTAL);
+                    break;
+                case 6:
+                    $img = $rotate($img, -90);
+                    break;
+                case 7:
+                    $img = $rotate($img, 90);
+                    imageflip($img, IMG_FLIP_HORIZONTAL);
+                    break;
+                case 8:
+                    $img = $rotate($img, 90);
+                    break;
+            }
+        }
+    }
+
+    // 保留透明通道
+    $hasAlpha = in_array($info[2], [IMAGETYPE_PNG, IMAGETYPE_GIF, IMAGETYPE_WEBP], true)
+        || (defined('IMAGETYPE_AVIF') && $info[2] === IMAGETYPE_AVIF);
+    if ($hasAlpha) {
+        imagealphablending($img, false);
+        imagesavealpha($img, true);
+    }
+
+    $ok = @imagewebp($img, $destPath, $quality);
+    imagedestroy($img);
+    return $ok;
+}
+
+/**
  * 保存上传的图片（文件 + MySQL）
  */
-function saveUploadedFile(array $file, string $folder): ?array
+function saveUploadedFile(array $file, string $folder, bool $convertWebp = false): ?array
 {
     if (!validateFolderName($folder)) {
         return null;
@@ -339,19 +582,42 @@ function saveUploadedFile(array $file, string $folder): ?array
     } else {
         $mimeType = '';
     }
-    if ($mimeType !== '' && !in_array($mimeType, ALLOWED_MIMES)) {
-        return null;
-    }
 
     $imageInfo = @getimagesize($file['tmp_name']);
     if ($imageInfo === false) {
         return null;
     }
 
+    // finfo 不可用时用 getimagesize 的真实类型兜底
+    if ($mimeType === '' || $mimeType === false) {
+        $mimeType = $imageInfo['mime'] ?? '';
+    }
+    if (!in_array($mimeType, ALLOWED_MIMES)) {
+        return null;
+    }
+
+    // WebP 转换（勾选且非 webp 源、非动画 GIF）
+    $toWebp = $convertWebp
+        && supportsWebpConversion()
+        && $imageInfo[2] !== IMAGETYPE_WEBP
+        && !($imageInfo[2] === IMAGETYPE_GIF && isAnimatedGif($file['tmp_name']));
+
     $newFilename = generateFilename($originalName);
     $destPath = $folderPath . '/' . $newFilename;
 
-    if (!move_uploaded_file($file['tmp_name'], $destPath)) {
+    // 转换为 WebP；失败则回退按原图保存
+    $converted = false;
+    if ($toWebp) {
+        $webpName = preg_replace('/\.[^.]+$/', '.webp', $newFilename);
+        $webpPath = $folderPath . '/' . $webpName;
+        if (convertImageToWebp($file['tmp_name'], $webpPath)) {
+            $newFilename = $webpName;
+            $destPath = $webpPath;
+            $converted = true;
+        }
+    }
+
+    if (!$converted && !move_uploaded_file($file['tmp_name'], $destPath)) {
         return null;
     }
 
@@ -364,6 +630,8 @@ function saveUploadedFile(array $file, string $folder): ?array
 
     $size = filesize($destPath);
     $url = BASE_URL . '/uploads/' . $folder . '/' . $newFilename;
+    $finalMime = ($converted || $imageInfo[2] === IMAGETYPE_WEBP) ? 'image/webp' : $mimeType;
+    $finalInfo = $converted ? (@getimagesize($destPath) ?: $imageInfo) : $imageInfo;
 
     // 写入 MySQL
     $pdo = getDB();
@@ -375,10 +643,10 @@ function saveUploadedFile(array $file, string $folder): ?array
         $folderId,
         $newFilename,
         $originalName,
-        $mimeType,
+        $finalMime,
         $size,
-        $imageInfo[0],
-        $imageInfo[1],
+        $finalInfo[0],
+        $finalInfo[1],
         $url,
     ]);
 
@@ -392,8 +660,10 @@ function saveUploadedFile(array $file, string $folder): ?array
         'url' => $url,
         'size' => $size,
         'sizeFormatted' => formatFileSize($size),
-        'width' => $imageInfo[0],
-        'height' => $imageInfo[1],
+        'width' => $finalInfo[0],
+        'height' => $finalInfo[1],
+        'converted' => $converted,
+        'ext' => strtolower(pathinfo($newFilename, PATHINFO_EXTENSION)),
         'uploaded_at' => date('Y-m-d H:i:s'),
     ];
 }
@@ -453,7 +723,7 @@ function deleteImageByPath(string $folder, string $filename): bool
 /**
  * 批量上传图片（文件 + MySQL）
  */
-function saveUploadedFiles(array $files, string $folder): array
+function saveUploadedFiles(array $files, string $folder, bool $convertWebp = false): array
 {
     $result = ['success' => [], 'failed' => []];
 
@@ -526,10 +796,6 @@ function saveUploadedFiles(array $files, string $folder): array
         } else {
             $mimeType = '';
         }
-        if ($mimeType !== '' && !in_array($mimeType, ALLOWED_MIMES)) {
-            $result['failed'][] = ['name' => $originalName, 'reason' => '文件类型不允许 (' . $mimeType . ')'];
-            continue;
-        }
 
         // 检查图片真实性
         $imageInfo = @getimagesize($tmpName);
@@ -538,18 +804,47 @@ function saveUploadedFiles(array $files, string $folder): array
             continue;
         }
 
+        // finfo 不可用时用 getimagesize 的真实类型兜底
+        if ($mimeType === '' || $mimeType === false) {
+            $mimeType = $imageInfo['mime'] ?? '';
+        }
+        if (!in_array($mimeType, ALLOWED_MIMES)) {
+            $result['failed'][] = ['name' => $originalName, 'reason' => '文件类型不允许 (' . $mimeType . ')'];
+            continue;
+        }
+
+        // WebP 转换（勾选且非 webp 源、非动画 GIF）
+        $toWebp = $convertWebp
+            && supportsWebpConversion()
+            && $imageInfo[2] !== IMAGETYPE_WEBP
+            && !($imageInfo[2] === IMAGETYPE_GIF && isAnimatedGif($tmpName));
+
         // 生成随机文件名
         $newFilename = generateFilename($originalName);
         $destPath = $folderPath . '/' . $newFilename;
 
+        // 转换为 WebP；失败则回退按原图保存
+        $converted = false;
+        if ($toWebp) {
+            $webpName = preg_replace('/\.[^.]+$/', '.webp', $newFilename);
+            $webpPath = $folderPath . '/' . $webpName;
+            if (convertImageToWebp($tmpName, $webpPath)) {
+                $newFilename = $webpName;
+                $destPath = $webpPath;
+                $converted = true;
+            }
+        }
+
         // 保存文件
-        if (!move_uploaded_file($tmpName, $destPath)) {
+        if (!$converted && !move_uploaded_file($tmpName, $destPath)) {
             $result['failed'][] = ['name' => $originalName, 'reason' => '保存文件失败'];
             continue;
         }
 
         $size = filesize($destPath);
         $url = BASE_URL . '/uploads/' . $folder . '/' . $newFilename;
+        $finalMime = ($converted || $imageInfo[2] === IMAGETYPE_WEBP) ? 'image/webp' : $mimeType;
+        $finalInfo = $converted ? (@getimagesize($destPath) ?: $imageInfo) : $imageInfo;
 
         // 写入 MySQL
         $stmt = $pdo->prepare("
@@ -560,10 +855,10 @@ function saveUploadedFiles(array $files, string $folder): array
             $folderId,
             $newFilename,
             $originalName,
-            $mimeType,
+            $finalMime,
             $size,
-            $imageInfo[0],
-            $imageInfo[1],
+            $finalInfo[0],
+            $finalInfo[1],
             $url,
         ]);
 
@@ -577,8 +872,10 @@ function saveUploadedFiles(array $files, string $folder): array
             'url' => $url,
             'size' => $size,
             'sizeFormatted' => formatFileSize($size),
-            'width' => $imageInfo[0],
-            'height' => $imageInfo[1],
+            'width' => $finalInfo[0],
+            'height' => $finalInfo[1],
+            'converted' => $converted,
+            'ext' => strtolower(pathinfo($newFilename, PATHINFO_EXTENSION)),
         ];
     }
 
