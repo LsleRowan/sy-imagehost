@@ -10,6 +10,8 @@
 function initSession(): void
 {
     if (session_status() === PHP_SESSION_NONE) {
+        // 服务端 session 生命周期与 Cookie 保持一致，否则 Cookie 未过期而 session 已被 GC
+        ini_set('session.gc_maxlifetime', (string)SESSION_LIFETIME);
         session_set_cookie_params([
             'lifetime' => SESSION_LIFETIME,
             'path' => '/',

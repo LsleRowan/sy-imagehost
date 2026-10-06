@@ -31,11 +31,11 @@ define('ALLOWED_MIMES', [
 ]);
 
 // ========================
-// 安全配置
+// 安全配置（默认值，可在后台"登录安全"修改，实际值存数据库）
 // ========================
 // 登录失败锁定
-define('MAX_LOGIN_ATTEMPTS', 5);
-define('LOGIN_LOCKOUT_TIME', 900); // 15分钟（秒）
+define('DEFAULT_MAX_LOGIN_ATTEMPTS', 5);
+define('DEFAULT_LOGIN_LOCKOUT_TIME', 1800); // 30分钟（秒）
 
-// Session 配置
-define('SESSION_LIFETIME', 3600); // 1小时（秒）
+// 会话有效期
+define('DEFAULT_SESSION_LIFETIME', 604800); // 7天（秒）
