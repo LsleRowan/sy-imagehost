@@ -35,7 +35,13 @@ if (!validateFolderName($folder)) {
     jsonError('Invalid folder name');
 }
 
-$result = saveUploadedFile($_FILES['image'], $folder);
+$convertWebp = (($_POST['webp'] ?? '') === '1');
+
+if ($convertWebp && !supportsWebpConversion()) {
+    jsonError('GD WebP conversion is not available on this server', 400);
+}
+
+$result = saveUploadedFile($_FILES['image'], $folder, $convertWebp);
 
 if ($result) {
     jsonSuccess($result);
